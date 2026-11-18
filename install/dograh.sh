@@ -29,7 +29,7 @@
 set -Eeuo pipefail
 
 # ── Defaults ────────────────────────────────────────────────────────────────
-INSTALLER_VERSION="1.0.0"   # wird in --status/-Logs ausgegeben – hilft bei Fehlersuche
+INSTALLER_VERSION="1.0.1"   # wird in --status/-Logs ausgegeben – hilft bei Fehlersuche
 APP_NAME="dograh"
 UPSTREAM_OWNER="dograh-hq"
 UPSTREAM_REPO="dograh"
@@ -106,10 +106,10 @@ on_error() {
         info "Container-Logs (Setup + Docker):"
         pct exec "$CT_ID" -- sh -c '
             tail -n 40 /var/log/dograh-setup.log 2>/dev/null
-            echo "--- docker compose ps ---"
-            docker compose --project-directory /opt/dograh ps 2>/dev/null || true
-            echo "--- docker compose logs (letzte 25 Zeilen) ---"
-            docker compose --project-directory /opt/dograh logs --tail 25 2>/dev/null || true
+            echo "--- docker ps (Projekt-Container) ---"
+            timeout 15 docker ps -a --filter 'label=com.docker.compose.project=dograh' 2>/dev/null || true
+            echo "--- docker compose logs (letzte 25 Zeilen, timeout 15s) ---"
+            timeout 15 docker compose --project-directory /opt/dograh logs --tail 25 2>/dev/null || true
             echo "--- journalctl -u dograh -u docker ---"
             journalctl -u dograh --no-pager 2>/dev/null | tail -n 10 || true
             journalctl -u docker --no-pager 2>/dev/null | tail -n 10 || true
@@ -544,7 +544,7 @@ set_key SERVER_IP "\$IP"
 SYNCEOF
 chmod +x "${APP_DIR}/sync-backend-url.sh"
 
-echo ">>> systemd-Unit 'dograh' schreiben (Restart=always) ..."
+echo ">>> systemd-Unit 'dograh' schreiben (detached Bootstrap) ..."
 cat > /etc/systemd/system/dograh.service <<UNITEOF
 [Unit]
 Description=Dograh Voice-Agent-Plattform (docker compose)
@@ -553,16 +553,20 @@ After=network-online.target docker.service
 Requires=docker.service
 
 [Service]
-# Attached `docker compose up`: systemd überwacht den Compose-Prozess,
-# Restart=always startet den Stack bei Crash/Abbruch neu. Die Container
-# tragen zusätzlich restart: unless-stopped (override-Datei).
-Type=simple
+# DETACHED Bootstrap (oneshot): startet/synchronisiert den Stack einmalig
+# (idempotent, wendet .env-Änderungen an). Die DAUERHAFTE Ausfallsicherung
+# übernehmen die Container selbst (restart: unless-stopped in der
+# override-Datei). Ein ATTACHED `compose up` als Service-Main-Prozess würde
+# das Compose-Projekt-Lock DAUERHAFT halten und alle weiteren
+# docker-compose-Aufrufe (Verifikation/Status/Logs) endlos blockieren
+# (Live-Fund 2026-11-18: Installer hing in der Verifikation am Lock).
+Type=oneshot
+RemainAfterExit=yes
 WorkingDirectory=/opt/dograh
 ExecStartPre=/opt/dograh/sync-backend-url.sh
-ExecStart=/usr/bin/docker compose --project-directory /opt/dograh up --pull=missing
+ExecStart=/usr/bin/docker compose --project-directory /opt/dograh up -d --pull=missing
 ExecStop=/usr/bin/docker compose --project-directory /opt/dograh stop
-Restart=always
-RestartSec=15
+TimeoutStartSec=600
 TimeoutStopSec=90
 
 [Install]
@@ -674,12 +678,14 @@ verify_installation() {
         sleep 1
     done
 
-    # Alle 5 Compose-Services oben?
+    # Alle 5 Compose-Services oben? – ACHTUNG: bewusst `docker ps` mit
+    # Projekt-Label statt `docker compose ps`: compose-Befehle blockieren
+    # gegenseitig über das Projekt-Lock; docker ps ist lockfrei.
     local ps_out=""
-    ps_out=$(pct exec "$ct_id" -- docker compose --project-directory /opt/dograh ps --format '{{.Service}} {{.State}}' 2>/dev/null || true)
+    ps_out=$(pct exec "$ct_id" -- docker ps --filter 'label=com.docker.compose.project=dograh' --format '{{.Names}} {{.State}}' 2>/dev/null || true)
     local missing=""
     for svc in postgres redis minio api ui; do
-        if ! grep -q "^${svc} " <<<"$ps_out"; then
+        if ! grep -q "$svc" <<<"$ps_out"; then
             missing+="${svc} "
         fi
     done
@@ -974,11 +980,11 @@ do_status() {
     fi
 
     local ps_out=""
-    ps_out=$(pct exec "$ct_id" -- docker compose --project-directory /opt/dograh ps --format '{{.Service}} {{.State}}' 2>/dev/null || true)
+    ps_out=$(pct exec "$ct_id" -- docker ps --filter 'label=com.docker.compose.project=dograh' --format '{{.Names}} {{.State}}' 2>/dev/null || true)
     if [[ -n "$ps_out" ]]; then
         info "Stack:     $(echo "$ps_out" | tr '\n' ' ' | sed 's/ $//')"
     else
-        warn "Stack:     docker compose ps lieferte nichts (Stack noch nie gestartet?)"
+        warn "Stack:     keine Container mit Projekt-Label dograh (Stack noch nie gestartet?)"
     fi
 
     local signup ip code=""

@@ -345,6 +345,13 @@ sub="${1:-}"
 case "$sub" in
     --version|-v) echo "Docker version 27.5.1, build mock"; exit 0 ;;
     info) exit 0 ;;
+    ps)
+        # `docker ps --filter label=… --format …` (lockfrei, Verifikation/Status)
+        [[ -f "$HS/ps_empty" ]] && exit 0
+        if [[ -f "$HS/stack_up" ]]; then
+            printf 'dograh-postgres-1 running\ndograh-redis-1 running\nminio running\ndograh-api-1 running\ndograh-ui-1 running\n'
+        fi
+        exit 0 ;;
     compose)
         shift  # "compose"
         # globale Flags mit Werten überspringen (--project-directory DIR, --file F)
@@ -653,12 +660,12 @@ assert_fcontains "$OV" 'ports: !override ["${DOGRAH_UI_PORT:-3010}:3010"]'
 n_restart=$(/bin/grep -c 'restart: unless-stopped' "$OV" || true)
 [[ "$n_restart" -ge 5 ]] && pass "5x restart: unless-stopped" || fail "restart-Policies: nur $n_restart"
 
-t "systemd-Unit: Restart=always + Prod-Pfade"
+t "systemd-Unit: detached Bootstrap + Prod-Pfade"
 UNIT="$MK/etc/systemd/system/dograh.service"
-assert_fcontains "$UNIT" "Restart=always"
-assert_fcontains "$UNIT" "RestartSec=15"
+assert_fcontains "$UNIT" "Type=oneshot"
+assert_fcontains "$UNIT" "RemainAfterExit=yes"
 assert_fcontains "$UNIT" "ExecStartPre=/opt/dograh/sync-backend-url.sh"
-assert_fcontains "$UNIT" "ExecStart=/usr/bin/docker compose --project-directory /opt/dograh up --pull=missing"
+assert_fcontains "$UNIT" "ExecStart=/usr/bin/docker compose --project-directory /opt/dograh up -d --pull=missing"
 assert_fcontains "$UNIT" "After=network-online.target docker.service"
 assert_fcontains "$UNIT" "WantedBy=multi-user.target"
 
@@ -923,7 +930,7 @@ t "--status: laufender Stack + Signup offen"
 seed_ct
 ec=$(run_installer --status); assert_exit 0 "$ec"
 assert_out "Service:   dograh läuft"
-assert_out "Stack:     postgres running"
+assert_out "Stack:     dograh-postgres-1 running"
 assert_out "Signup:    OFFEN"
 assert_out "Web-UI:    http://$CT_IP:3010  (HTTP 200)"
 assert_out "API:       http://$CT_IP:8000  (HTTP 200)"

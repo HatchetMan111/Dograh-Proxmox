@@ -27,7 +27,7 @@ Das Script:
 2. installiert **Docker CE** (get.docker.com) im Container,
 3. lädt die **offizielle Compose-Datei** von upstream und ergänzt ein eigenes Override (Restart-Policies, UI/API auf 0.0.0.0, Postgres/Redis nur localhost, MinIO auf :9000),
 4. erzeugt eine **`.env` mit generierten Secrets** (JWT, Postgres, Redis, MinIO – chmod 600),
-5. schreibt die **systemd-Unit `dograh`** (`Restart=always`, `After=docker.service network-online.target`, IP-Sync als `ExecStartPre`),
+5. schreibt die **systemd-Unit `dograh`** (detached Bootstrap: `up -d`, `After=docker.service network-online.target`, IP-Sync als `ExecStartPre`) – die Ausfallsicherung läuft über `restart: unless-stopped` der Container (Compose-Standard, Community-Scripts-Muster),
 6. **verifiziert** Service, alle 5 Compose-Services und Web-UI/API per HTTP-Check und gibt die finale URL aus.
 
 Erwartete Ausgabe (Ende):
@@ -124,7 +124,7 @@ Zeigt CT, Service, Compose-Stack, Signup-Status und Erreichbarkeit von Web-UI + 
 ## 🔁 Reboot-Verhalten
 
 - CT: `onboot=1` → startet automatisch mit dem Host.
-- Docker-Stack: systemd-Unit `dograh` (`Restart=always`) **plus** `restart: unless-stopped` auf allen 5 Containern.
+- Docker-Stack: systemd-Unit `dograh` synchronisiert beim Boot (`up -d`, idempotent), die Container tragen `restart: unless-stopped` – Docker startet sie auch ohne Unit selbst wieder.
 - DHCP-IP-Hüpfer: `ExecStartPre` (`sync-backend-url.sh`) aktualisiert die IP-abhängigen `.env`-Einträge bei jedem Start selbst → die Browser→API-URL bleibt korrekt.
 - **Trotzdem empfohlen:** DHCP-Reservierung im Router oder `--ip` bei der Installation – so bleiben Agent-Webhooks und Bookmarks stabil.
 
