@@ -29,7 +29,7 @@
 set -Eeuo pipefail
 
 # ── Defaults ────────────────────────────────────────────────────────────────
-INSTALLER_VERSION="1.0.1"   # wird in --status/-Logs ausgegeben – hilft bei Fehlersuche
+INSTALLER_VERSION="1.0.2"   # wird in --status/-Logs ausgegeben – hilft bei Fehlersuche
 APP_NAME="dograh"
 UPSTREAM_OWNER="dograh-hq"
 UPSTREAM_REPO="dograh"
@@ -351,7 +351,7 @@ trap 'echo "✘ Setup-Fehler: exit $? in Zeile $LINENO: $BASH_COMMAND" >&2' ERR
 export DEBIAN_FRONTEND=noninteractive
 export LC_ALL=C   # verhindert perl/locale-Warnungen im frischen Debian-CT
 
-err(){ echo "✘ $1" >&2; }
+err(){ echo -e "✘ $1" >&2; }
 ok(){ echo "✔ $1"; }
 die(){ err "$1"; exit 1; }
 
@@ -591,7 +591,7 @@ systemctl start dograh
 echo ">>> Warte auf API-Gesundheit (http://127.0.0.1:${API_PORT}/api/v1/health) ..."
 API_OK=""
 for _ in $(seq 1 60); do
-    code=$(curl -s -o /dev/null --max-time 3 -w '%{http_code}' \
+    code=$(curl -sL -o /dev/null --max-time 3 -w '%{http_code}' \
            "http://127.0.0.1:${API_PORT}/api/v1/health" || true)
     if [[ "$code" == "200" ]]; then
         API_OK=1
@@ -607,7 +607,7 @@ ok "API gesund (HTTP 200)"
 echo ">>> Warte auf Web-UI (http://127.0.0.1:${UI_PORT}/) ..."
 UI_OK=""
 for _ in $(seq 1 30); do
-    code=$(curl -s -o /dev/null --max-time 3 -w '%{http_code}' \
+    code=$(curl -sL -o /dev/null --max-time 3 -w '%{http_code}' \
            "http://127.0.0.1:${UI_PORT}/" || true)
     if [[ "$code" == "200" ]]; then
         UI_OK=1
@@ -620,7 +620,7 @@ if [[ -z "$UI_OK" ]]; then
 fi
 ok "Web-UI antwortet (HTTP 200)"
 
-code=$(curl -s -o /dev/null --max-time 3 -w '%{http_code}' \
+code=$(curl -sL -o /dev/null --max-time 3 -w '%{http_code}' \
        "http://127.0.0.1:9000/minio/health/live" || true)
 if [[ "$code" == "200" ]]; then
     ok "MinIO gesund (HTTP 200)"
@@ -698,7 +698,7 @@ verify_installation() {
     # 000 aus – NIE zusätzlich || echo 000 anhängen, sonst falsch-positiv.)
     tries=0
     while true; do
-        code=$(pct exec "$ct_id" -- curl -s -o /dev/null --max-time 3 -w '%{http_code}' \
+        code=$(pct exec "$ct_id" -- curl -sL -o /dev/null --max-time 3 -w '%{http_code}' \
                "http://127.0.0.1:${UI_PORT}/" || true)
         if [[ "$code" == "200" ]]; then
             ok "Web-UI antwortet (HTTP 200 auf Port ${UI_PORT})"
@@ -714,7 +714,7 @@ verify_installation() {
     tries=0
     code=""
     while true; do
-        code=$(pct exec "$ct_id" -- curl -s -o /dev/null --max-time 3 -w '%{http_code}' \
+        code=$(pct exec "$ct_id" -- curl -sL -o /dev/null --max-time 3 -w '%{http_code}' \
                "http://127.0.0.1:${API_PORT}/api/v1/health" || true)
         if [[ "$code" == "200" ]]; then
             ok "API gesund (HTTP 200 auf Port ${API_PORT})"
@@ -732,7 +732,7 @@ verify_installation() {
     local ct_ip="" host_code=""
     ct_ip=$(get_ct_ip "$ct_id")
     if [[ -n "$ct_ip" ]]; then
-        host_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        host_code=$(curl -sL -o /dev/null -w '%{http_code}' --max-time 5 \
                     "http://${ct_ip}:${UI_PORT}/" || true)
         if [[ "$host_code" == "200" ]]; then
             ok "Vom Host erreichbar: http://${ct_ip}:${UI_PORT} (HTTP 200)"
@@ -997,13 +997,13 @@ do_status() {
 
     ip=$(get_ct_ip "$ct_id")
     if [[ -n "$ip" ]]; then
-        code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://${ip}:${UI_PORT}/" || true)
+        code=$(curl -sL -o /dev/null -w '%{http_code}' --max-time 5 "http://${ip}:${UI_PORT}/" || true)
         if [[ "$code" == "200" ]]; then
             ok "Web-UI:    http://${ip}:${UI_PORT}  (HTTP 200)"
         else
             warn "Web-UI:    HTTP-Code ${code:-unbekannt} von http://${ip}:${UI_PORT}"
         fi
-        code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://${ip}:${API_PORT}/api/v1/health" || true)
+        code=$(curl -sL -o /dev/null -w '%{http_code}' --max-time 5 "http://${ip}:${API_PORT}/api/v1/health" || true)
         if [[ "$code" == "200" ]]; then
             ok "API:       http://${ip}:${API_PORT}  (HTTP 200)"
         else

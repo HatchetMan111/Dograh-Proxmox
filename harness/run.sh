@@ -327,13 +327,21 @@ code="200"
 if [[ -f "$HS/host_curl_fail" && -z "${MKROOT:-}" ]]; then
     code="000"
 fi
+# Next.js-UI antwortet auf / mit 307 (Redirect auf Login) — NUR curl mit -L
+# folgt dem Redirect (Live-Fund 2026-11-18: Installer starb an 307 statt 200)
+has_L="false"
+for a in "$@"; do
+    if [[ "$a" == "-L" || "$a" == -*L && "$a" != -*L*=* ]]; then has_L="true"; fi
+done
 case "$url" in
     *"/api/v1/health")    [[ -f "$HS/fail_api"   ]] && code="000" ;;
     *"minio/health/live") [[ -f "$HS/fail_minio" ]] && code="000" ;;
-    http://127.0.0.1:*)   [[ -f "$HS/fail_ui"    ]] && code="000" ;;
+    http://127.0.0.1:*)
+        if [[ "$has_L" != "true" ]]; then code="307"; fi
+        [[ -f "$HS/fail_ui" ]] && code="000" ;;
 esac
 echo "$code"
-[[ "$code" == "200" ]] && exit 0 || exit 7
+[[ "$code" == "200" || "$code" == "307" ]] && exit 0 || exit 7
 EOF
 
 cat > "$MK/mock-docker" <<'EOF'
