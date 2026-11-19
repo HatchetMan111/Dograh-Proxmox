@@ -233,7 +233,14 @@ case "$cmd" in
             ${newenvs[@]+"${newenvs[@]}"} \
             "${newargs[@]}"
         ;;
-    enter|config|rollback|clone|resume|suspend|reboot|snapshot|delvolume|mount|resize|move|reindex|set)
+    config)
+        if [[ ! -f "$HS/ct_${id}.hostname" ]]; then
+            echo "mock: CT $id unbekannt" >&2
+            exit 2
+        fi
+        printf 'arch: amd64\ncores: 4\nhostname: %s\nonboot: 1\n' "$(cat "$HS/ct_${id}.hostname")"
+        exit 0 ;;
+    enter|rollback|clone|resume|suspend|reboot|snapshot|delvolume|mount|resize|move|reindex|set)
         exit 0 ;;
     *)
         echo "mock-pct: unbekannter Befehl $cmd" >&2; exit 1 ;;
@@ -588,12 +595,14 @@ assert_fcontains "$HS/ct_203.create" "hostname dograh"
 t "pct list ohne Lock-Spalte (Name \$NF)"
 reset_state
 printf '200 running dograh\n' > "$HS/ct_list"
+echo "running" > "$HS/ct_200.status"; echo "dograh" > "$HS/ct_200.hostname"
 ec=$(run_installer --status); assert_exit 0 "$ec"
 assert_out "Container:  200 (running) – dograh"
 
 t "pct list mit doppeltem Leerzeichen (Lock leer)"
 reset_state
 printf '200 running  dograh\n' > "$HS/ct_list"
+echo "running" > "$HS/ct_200.status"; echo "dograh" > "$HS/ct_200.hostname"
 ec=$(run_installer --status); assert_exit 0 "$ec"
 assert_out "Container:  200 (running) – dograh"
 
@@ -882,8 +891,27 @@ assert_out "existiert – --force: lösche und lege neu an"
 t "--update ohne CT → die"
 reset_state
 ec=$(run_installer --update); assert_exit 1 "$ec"
-assert_out "Kein Container mit Hostname 'dograh' gefunden"
+assert_out "Kein Dograh-Container gefunden"
 assert_out "Erst installieren"
+assert_out "--update --id 204"
+
+t "--update mit expliziter --id (Hostname-Suche leer)"
+seed_ct
+: > "$HS/ct_list"          # List-Suche findet nichts – --id zwingt die ID durch
+ec=$(run_installer --update --id 200); assert_exit 0 "$ec"
+assert_docker 1 "docker compose pull"
+assert_out "Update abgeschlossen"
+
+t "--update mit unbekannter --id → die"
+seed_ct
+ec=$(run_installer --update --id 999); assert_exit 1 "$ec"
+assert_out "--id 999 unbekannt"
+
+t "pct list Format-Abweichung → pct config-Fallback"
+seed_ct
+printf '200 running vm200-irgendwas\n' > "$HS/ct_list"   # $NF != dograh → Fallback
+ec=$(run_installer --status); assert_exit 0 "$ec"
+assert_out "Service:   dograh läuft"
 
 t "nicht-root (EUID-Check via env ohne unshare)"
 ec=$( env -i PATH="$HOSTBIN:/usr/sbin:/usr/bin:/sbin:/bin" HARNESS_STATE="$HS" HOME=/root TERM=dumb \
@@ -960,8 +988,9 @@ assert_out "pct start 200"
 t "--status: CT fehlt"
 reset_state
 ec=$(run_installer --status); assert_exit 0 "$ec"
-assert_out "Kein Container mit Hostname 'dograh' gefunden."
+assert_out "Kein Dograh-Container gefunden"
 assert_out "Installieren:  bash -c"
+assert_out "--status --id 204"
 
 t "Host-Check tot → warn, install trotzdem exit 0"
 seed_ct

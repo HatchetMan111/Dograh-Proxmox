@@ -29,7 +29,7 @@
 set -Eeuo pipefail
 
 # ── Defaults ────────────────────────────────────────────────────────────────
-INSTALLER_VERSION="1.0.2"   # wird in --status/-Logs ausgegeben – hilft bei Fehlersuche
+INSTALLER_VERSION="1.0.3"   # wird in --status/-Logs ausgegeben – hilft bei Fehlersuche
 APP_NAME="dograh"
 UPSTREAM_OWNER="dograh-hq"
 UPSTREAM_REPO="dograh"
@@ -149,7 +149,24 @@ find_free_id() {
 }
 
 find_ct_id_by_hostname() {
-    pct list 2>/dev/null | awk -v h="$CT_HOSTNAME" '$NF==h {print $1; exit}'
+    # Schneller Weg: `pct list`, Name ist (meist) die LETZTE Spalte
+    local id
+    id=$(pct list 2>/dev/null | awk -v h="$CT_HOSTNAME" '$NF==h {print $1; exit}' || true)
+    if [[ -n "$id" ]]; then
+        echo "$id"
+        return 0
+    fi
+    # Fallback: Spaltenformat variiert zwischen PVE-Versionen → jede VMID
+    # einzeln über `pct config` gegen den Hostname prüfen (Live-Fund 2026-11-19:
+    # ProxSmartHome-Host fand den laufenden CT nicht über die Liste).
+    local cand
+    for cand in $(pct list 2>/dev/null | awk 'NR>1 {print $1}' || true); do
+        if pct config "$cand" 2>/dev/null | grep -q "^hostname: ${CT_HOSTNAME}$"; then
+            echo "$cand"
+            return 0
+        fi
+    done
+    return 0
 }
 
 get_ct_ip() {
@@ -901,12 +918,13 @@ do_install() {
 do_update() {
     header "🔄 Update Dograh (Compose-Datei + Images neu ziehen)"
 
-    local ct_id
-    ct_id=$(find_ct_id_by_hostname || true)
-    if [[ -z "$ct_id" ]]; then
-        die "Kein Container mit Hostname '$CT_HOSTNAME' gefunden.\n  Erst installieren:  ${ONE_LINER}"
+    if [[ -z "$CT_ID" ]]; then
+        CT_ID=$(find_ct_id_by_hostname || true)
     fi
-    CT_ID="$ct_id"
+    if [[ -z "$CT_ID" ]] || ! pct status "$CT_ID" &>/dev/null; then
+        die "Kein Dograh-Container gefunden (${CT_ID:+--id $CT_ID unbekannt; }Hostname-Suche '$CT_HOSTNAME' leer).\n  Erst installieren:  ${ONE_LINER}\n  CT-ID explizit angeben:  ${ONE_LINER} --update --id 204"
+    fi
+    local ct_id="$CT_ID"
 
     ensure_ct_running "$ct_id"
     verify_ct_dns "$ct_id"
@@ -922,13 +940,14 @@ do_update() {
 do_uninstall() {
     header "🗑️  Deinstalliere Dograh"
 
-    local ct_id
-    ct_id=$(find_ct_id_by_hostname || true)
-    if [[ -z "$ct_id" ]]; then
-        warn "Kein Container mit Hostname '$CT_HOSTNAME' gefunden – nichts zu tun."
+    if [[ -z "$CT_ID" ]]; then
+        CT_ID=$(find_ct_id_by_hostname || true)
+    fi
+    if [[ -z "$CT_ID" ]] || ! pct status "$CT_ID" &>/dev/null; then
+        warn "Kein Dograh-Container gefunden (${CT_ID:+--id $CT_ID unbekannt; }Hostname-Suche '$CT_HOSTNAME' leer) – nichts zu tun."
         return 0
     fi
-    CT_ID="$ct_id"
+    local ct_id="$CT_ID"
 
     warn "Container $ct_id ($CT_HOSTNAME) wird GESTOPPT und GELÖSCHT."
     warn "ALLE Daten gehen verloren: Agenten, Accounts, Postgres, Voice-Audio (MinIO)."
@@ -952,14 +971,16 @@ do_status() {
     header "📊 Status Dograh"
     info "Installer-Version: v${INSTALLER_VERSION}"
 
-    local ct_id
-    ct_id=$(find_ct_id_by_hostname || true)
-    if [[ -z "$ct_id" ]]; then
-        warn "Kein Container mit Hostname '$CT_HOSTNAME' gefunden."
+    if [[ -z "$CT_ID" ]]; then
+        CT_ID=$(find_ct_id_by_hostname || true)
+    fi
+    if [[ -z "$CT_ID" ]] || ! pct status "$CT_ID" &>/dev/null; then
+        warn "Kein Dograh-Container gefunden (${CT_ID:+--id $CT_ID unbekannt; }Hostname-Suche '$CT_HOSTNAME' leer)."
         info "Installieren:  ${ONE_LINER}"
+        info "CT-ID explizit:  ${ONE_LINER} --status --id 204"
         return 0
     fi
-    CT_ID="$ct_id"
+    local ct_id="$CT_ID"
 
     pct list 2>/dev/null | awk -v id="$ct_id" '$1==id {print "Container:  " $1 " (" $2 ") – " $NF}'
 
